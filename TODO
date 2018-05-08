@@ -3,3 +3,6 @@ Notes for restructuring of last version:
 - Game Loop structure should show no details of lower-level logic
 - Different feature vectors should be interchangeable
 - same for ranking moves etc.
+
+
+- COMMENTING!!
