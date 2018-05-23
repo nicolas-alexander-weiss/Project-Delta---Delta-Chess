@@ -10,5 +10,5 @@ setup(
     author="Nicolas Weiss",
     author_email="nicolas.alexander.weiss@gmail.com",
     packages=["deltachess"],
-    install_requires=["numpy", "scikit-learn", "python-chess"]
+    install_requires=["numpy", "scikit-learn", "python-chess", "tensorflow"]
 )
