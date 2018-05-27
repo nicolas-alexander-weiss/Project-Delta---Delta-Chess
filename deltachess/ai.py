@@ -104,18 +104,52 @@ class SEOTDNN(AI):
 
         # build graph
 
+        self.tf_input_vec = tf.placeholder(tf.float32, shape=[None, 83], name="input_vec")
+
+        # split into board / other features -> input layer
+        self.tf_global_features_vec, self.tf_board_feature_vec = tf.split(self.tf_input_vec, [19, 64], 1)
+
+        # First Hidden Layer
+        self.tf_hidden_layer_1_1 = tf.layers.Dense(units=19)
+        self.tf_hidden_layer_1_2 = tf.layers.Dense(units=64)
+
+        # get output of first hidden layer, stacking in order to pass them together through last layer
+        self.tf_output_hidden_layer_1_1 = self.tf_hidden_layer_1_1(self.tf_global_features_vec)
+        self.tf_output_hidden_layer_1_2 = self.tf_hidden_layer_1_2(self.tf_board_feature_vec)
+
+        # combine, for next layer
+        self.tf_input_hidden_layer_2 = tf.concat([self.tf_output_hidden_layer_1_1,
+                                                 self.tf_output_hidden_layer_1_2],
+                                                 axis=1)
+
+        # Second HL
+        self.tf_hidden_layer_2 = tf.layers.Dense(units=83)
+
+        # pass through
+        self.tf_input_output_layer = self.tf_hidden_layer_2(self.tf_input_hidden_layer_2)
+
+        # output layer
+        self.tf_output_layer = tf.layers.Dense(units=1)
+
+        # get output
+        self.tf_output = self.tf_output_layer(self.tf_input_output_layer)
+
+        #
+        #
+
         # init operators
-        self.var_init = tf.global_variables_initializer()
+        self.tf_var_init = tf.global_variables_initializer()
 
         # create saver and session
-        self.saver = tf.train.Saver()
-        self.sess = tf.Session()
+        self.tf_saver = tf.train.Saver()
+        self.tf_sess = tf.Session()
 
         # load variables if checkpoint exists, otherwise initialize variables
         if tf.train.checkpoint_exists(self.checkpoint_name):
             self.saver.restore(sess=self.sess)
         else:
-            self.sess.run((self.var_init,))
+            self.tf_sess.run((self.tf_var_init,))
+            # print(self.tf_sess.run(self.tf_output, feed_dict={self.tf_input_vec: [self.get_feature_vector(chess.Board())]}))
 
     def close_model(self):
         self.saver.save(sess=self.sess, save_path=self.checkpoint_name)
@@ -125,7 +159,6 @@ class SEOTDNN(AI):
     @staticmethod
     def get_feature_vector(board):
 
-        print(board)
         # sanity check
         if not isinstance(board, chess.Board):
             raise ValueError("Parameter is not of instance", chess.Board)
@@ -171,7 +204,8 @@ class SEOTDNN(AI):
 
 if __name__ == "__main__":
     board = chess.Board()
+    ai = SEOTDNN()
     #print(board.piece_at(0).symbol())
-    print(SEOTDNN.get_feature_vector(board))
+    #print(SEOTDNN.get_feature_vector(board))
 
 
