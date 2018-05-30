@@ -1,11 +1,11 @@
-from .ai import TestModel
+from ai import SEOTDNN
 import chess
 
 
 class SelfPlayTraining:
     def __init__(self, num_games=1, verbosity=1):
         """Initiates the AI model as well as training parameters"""
-        self.ai = TestModel()
+        self.ai = SEOTDNN()
         self.num_games = num_games
         self.num_remaining_games = num_games
         self.verbosity = verbosity
@@ -27,6 +27,7 @@ class SelfPlayTraining:
         self.game_is_on = True
 
         while not self.board.is_game_over():
+            self.ai.update_with_current_board(board=self.board)
             if self.verbosity > 0:
                 self.update_progress()
             next_move = self.ai.get_best_move(self.board)
@@ -48,6 +49,9 @@ class SelfPlayTraining:
 
         Should be in a different thread!
         """
+
+        print(self.board)
+
         if not self.game_is_on:
             print(self.stats)
             if self.last_victory_status:
@@ -57,4 +61,6 @@ class SelfPlayTraining:
             print("rounds:", self.board.fullmove_number, "board:", self.board.fen())
 
 
+if __name__ == "__main__":
+    spt = SelfPlayTraining().play_training_game()
 
