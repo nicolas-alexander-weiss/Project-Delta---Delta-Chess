@@ -34,7 +34,7 @@ class AI(metaclass=ABCMeta):
         accumulate training data for later use."""
         pass
     @abstractmethod
-    def end_training(self, board):
+    def end_training(self):
         """Performs training if not done earlier."""
         pass
     @abstractmethod
@@ -323,7 +323,7 @@ class SEOTDNN(AI):
 
         self.tf_sess.run((u_w1_1,u_b1_1,u_w1_2,u_b1_2,u_w2,u_b2,u_w3,u_b3))
 
-    def end_training(self, board):
+    def end_training(self):
         pass
 
     def get_best_move(self, board):
@@ -344,11 +344,290 @@ class SEOTDNN(AI):
         print("Checkpoint name:", self.checkpoint_name)
         self.tf_sess.close()
 
+class NewAI(AI):
+    sym_to_int = {"P": chess.PAWN, "N": chess.KNIGHT, "B": chess.BISHOP, "R": chess.ROOK, "Q": chess.QUEEN,
+                  "K": chess.KING,
+                  "p": - chess.PAWN, "n": - chess.KNIGHT, "b": - chess.BISHOP, "r": - chess.ROOK,
+                  "q": - chess.QUEEN, "k": - chess.KING,
+                  "None": 0}
+    norm_bool = {True: 1, False: -1}
+
+    @staticmethod
+    def get_feature_vector(board):
+
+        # sanity check
+        if not isinstance(board, chess.Board):
+            raise ValueError("Parameter is not of instance", chess.Board)
+
+        vec = np.zeros(SEOTDNN.num_features)
+
+        # [-1,1] normalized
+        vec[0] = SEOTDNN.norm_bool[board.turn]
+        vec[1] = SEOTDNN.norm_bool[board.has_queenside_castling_rights(True)]
+        vec[2] = SEOTDNN.norm_bool[board.has_kingside_castling_rights(True)]
+        vec[3] = SEOTDNN.norm_bool[board.has_queenside_castling_rights(False)]
+        vec[4] = SEOTDNN.norm_bool[board.has_kingside_castling_rights(False)]
+        vec[5] = SEOTDNN.norm_bool[board.has_legal_en_passant()]
+        # vec[6:18]: Piece counts
+        # vec[19:82]: Board positions
+
+        for i in range(0, 64, 1):
+            piece_val = SEOTDNN.sym_to_int[str(board.piece_at(i))]
+
+            vec[SEOTDNN.get_piece_count_index(piece_val)] += 1
+
+            # already zero mean, just normalize
+            vec[19 + i] = piece_val / 6
+
+        # scale piece counts
+        vec[6:11] -= 4
+        vec[6:11] /= 4
+        vec[12] -= 32
+        vec[12] /= 32
+        vec[13:18] -= 4
+        vec[13:18] /= 4
+
+        return vec
+
+    @staticmethod
+    def get_piece_count_index(piece_val):
+        if piece_val < -6 or piece_val > 6:
+            raise ValueError("Piece is not in range [-6,6]")
+
+        return 12 + piece_val
+
+    def __init__(self, checkpoint_name="undefined", discount_lambda=0.3, learning_rate=0.1):
+
+        # create timestamp if undefined -> used as checkpoint name for TF
+        if checkpoint_name == "undefined":
+            self.checkpoint_name = "/tmp/" + str(int(time.time() // 1))
+        else:
+            self.checkpoint_name = "/tmp/" + checkpoint_name
+
+        self.len_flattened_gradient_vec = 19*19 + 19 + 64*64 + 64 + 83*83 + 83 + 1*83 + 1
+
+        # learning vars:
+
+        self.d_lambda = discount_lambda
+        self.alpha = learning_rate
+
+        self.overall_w_change = np.zeros((1,self.len_flattened_gradient_vec))
+        self.pred_t, self.pred_t1 = (0.,0.)
+
+        self.grad_sum = np.zeros((1,self.len_flattened_gradient_vec))
+        self.grad_t1 = np.zeros((1,self.len_flattened_gradient_vec))
+
+        self.just_initialized = True
+
+        #
+        # build graph
+        #
+
+        # get input vector, split into board / other features -> input layer
+        self.tf_input_vec = tf.placeholder(tf.float64, shape=[None, 83], name="input_vec")
+        self.tf_global_features_vec, self.tf_board_feature_vec = tf.split(self.tf_input_vec, [19, 64], 1)
+
+        # First Hidden Layer
+        self.tf_w1_1 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(19, 19), stddev=0.1))
+        self.tf_b1_1 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(19,), stddev=0.1))
+        self.tf_w1_2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(64, 64), stddev=0.1))
+        self.tf_b1_2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(64,), stddev=0.1))
+
+        # get output of first hidden layer, stacking in order to pass them together through last layer
+        self.tf_wsum1_1 = self.tf_b1_1 + self.tf_global_features_vec @ tf.transpose(self.tf_w1_1)
+        self.tf_wsum1_2 = self.tf_b1_2 + self.tf_board_feature_vec @ tf.transpose(self.tf_w1_2)
+
+        # compute activations with RELU
+        self.tf_a1_1 = tf.nn.relu(self.tf_wsum1_1)
+        self.tf_a1_2 = tf.nn.relu(self.tf_wsum1_2)
+
+        # combine, for next layer
+        self.tf_a1 = tf.concat([self.tf_a1_1,
+                                self.tf_a1_2],
+                               axis=1)
+
+        # Second HL
+        self.tf_w2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(83, 83), stddev=0.1))
+        self.tf_b2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(83,), stddev=0.1))
+
+        # pass through
+        self.tf_wsum2 = self.tf_b2 + self.tf_a1 @ tf.transpose(self.tf_w2)
+        self.tf_a2 = tf.nn.relu(self.tf_wsum2)
+
+        # output layer
+        self.tf_w3 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(1, 83), stddev=0.1))
+        self.tf_b3 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(1,), stddev=0.1))
+
+        # get output
+        self.tf_wsum3 = self.tf_b3 + self.tf_a2 @ tf.transpose(self.tf_w3)
+        self.tf_output = tf.nn.tanh(self.tf_wsum3)
+
+        # gradients on prediction
+        self.tf_grad_w1_1, self.tf_grad_b1_1 \
+            , self.tf_grad_w1_2, self.tf_grad_b1_2 \
+            , self.tf_grad_w2, self.tf_grad_b2\
+            , self.tf_grad_w3, self.tf_grad_b3 \
+            = tf.gradients(self.tf_output, [self.tf_w1_1, self.tf_b1_1,
+                                            self.tf_w1_2, self.tf_b1_2,
+                                            self.tf_w2, self.tf_b2,
+                                            self.tf_w3, self.tf_b3])
+
+        self.tf_all_gradients = tf.concat(
+            [
+                tf.reshape(self.tf_grad_w1_1, shape=(-1, 19 * 19)),
+                tf.reshape(self.tf_grad_b1_1, shape=(-1, 19)),
+                tf.reshape(self.tf_grad_w1_2, shape=(-1, 64 * 64)),
+                tf.reshape(self.tf_grad_b1_2, shape=(-1, 64)),
+                tf.reshape(self.tf_grad_w2, shape=(-1, 83 * 83)),
+                tf.reshape(self.tf_grad_b2, shape=(-1, 83)),
+                tf.reshape(self.tf_grad_w3, shape=(-1, 83)),
+                tf.reshape(self.tf_grad_b3, shape=(-1, 1))
+            ],
+            axis=1
+        )
+
+        self.tf_update_gradients_input = tf.placeholder(tf.float64, shape=(1, self.len_flattened_gradient_vec))
+        self.tf_split_w1_1, self.tf_split_b1_1 \
+            , self.tf_split_w1_2, self.tf_split_b1_2 \
+            , self.tf_split_w2, self.tf_split_b2 \
+            , self.tf_split_w3, self.tf_split_b3 \
+                = tf.split(self.tf_update_gradients_input, num_or_size_splits=[19*19,19,64*64,64,83*83,83,83,1], axis=1)
+
+        self.tf_update_parameters = (tf.assign(self.tf_w1_1, tf.add(self.tf_w1_1, tf.reshape(self.tf_split_w1_1, shape=(19,19)))),
+                                     tf.assign(self.tf_b1_1, tf.add(self.tf_b1_1, tf.reshape(self.tf_split_b1_1, shape=(19,)))),
+                                     tf.assign(self.tf_w1_2, tf.add(self.tf_w1_2, tf.reshape(self.tf_split_w1_2, shape=(64,64)))),
+                                     tf.assign(self.tf_b1_2, tf.add(self.tf_b1_2, tf.reshape(self.tf_split_b1_2, shape=(64,)))),
+                                     tf.assign(self.tf_w2, tf.add(self.tf_w2, tf.reshape(self.tf_split_w2, shape=(83,83)))),
+                                     tf.assign(self.tf_b2, tf.add(self.tf_b2, tf.reshape(self.tf_split_b2, shape=(83,)))),
+                                     tf.assign(self.tf_w3, tf.add(self.tf_w3, tf.reshape(self.tf_split_w3, shape=(1,83)))),
+                                     tf.assign(self.tf_b3, tf.add(self.tf_b3, tf.reshape(self.tf_split_b3, shape=(1,)))))
+
+        self.tf_replace_parameters = (tf.assign(self.tf_w1_1, tf.reshape(self.tf_split_w1_1, shape=(19, 19))),
+                                      tf.assign(self.tf_b1_1, tf.reshape(self.tf_split_b1_1, shape=(19,))),
+                                      tf.assign(self.tf_w1_2, tf.reshape(self.tf_split_w1_2, shape=(64, 64))),
+                                      tf.assign(self.tf_b1_2, tf.reshape(self.tf_split_b1_2, shape=(64,))),
+                                      tf.assign(self.tf_w2, tf.reshape(self.tf_split_w2, shape=(83, 83))),
+                                      tf.assign(self.tf_b2, tf.reshape(self.tf_split_b2, shape=(83,))),
+                                      tf.assign(self.tf_w3, tf.reshape(self.tf_split_w3, shape=(1, 83))),
+                                      tf.assign(self.tf_b3, tf.reshape(self.tf_split_b3, shape=(1,))))
+
+        self.tf_initializer = tf.global_variables_initializer()
+        self.tf_saver = tf.train.Saver()
+        self.tf_sess = tf.Session()
+
+        # load variables if checkpoint exists, otherwise initialize variables
+        if tf.train.checkpoint_exists(self.checkpoint_name):
+            self.tf_saver.restore(sess=self.tf_sess, save_path=self.checkpoint_name)
+        else:
+            self.tf_sess.run(self.tf_initializer)
+
+
+    def update_with_current_board(self, board, victory_status=-1):
+        """
+        Pseudo code:
+
+        Needed vars:
+        - overall_w_change
+        - pred_t1, pred_t
+        - grad_sum(t)
+        - lambda
+        - alpha
+        - grad_t_1
+
+        w_change_t:
+        - alpha * (pred_t1 - pred_t) * grad_sum(t)
+
+        structure:
+        0. get initial position
+        1. pred_t <- pred on initial position
+        2. grad_sum <- grad on pred_t
+
+        3. do move
+        4. if game_over:
+                pred_t1 <- game_outcome (-1, 0, 1)
+            else:
+                pred_t1 <- pred on current position
+                grad_t1 <- grad on current position
+        5. overall_w_change += w_change_t
+        6. grad_sum <- grad_t1 + lambda * grad_sum
+        7. pred_t <- pred_t1
+
+        repeat 3-7 until (including) gameover
+
+        :return:
+        """
+
+        if self.just_initialized:
+            self.pred_t, self.grad_sum = self.tf_sess.run((self.tf_output, self.tf_all_gradients),
+                                                          feed_dict={self.tf_input_vec:[NewAI.get_feature_vector(board)]})
+            self.just_initialized = False
+            return
+
+        if victory_status != -1:
+            game_outcome = victory_status * NewAI.norm_bool[board.turn]
+            self.pred_t1 = game_outcome
+        else:
+            self.pred_t1, self.grad_t1 = self.tf_sess.run((self.tf_output, self.tf_all_gradients),
+                                                          feed_dict={self.tf_input_vec:[NewAI.get_feature_vector(board)]})
+            self.pred_t1 = self.pred_t1[0][0]
+
+        self.overall_w_change += self.w_change_t()
+        self.grad_sum = self.grad_t1 + self.d_lambda * self.grad_sum
+        self.pred_t = self.pred_t1
+        return
+
+    def w_change_t(self):
+        return self.alpha * (self.pred_t1 - self.pred_t) * self.grad_sum
+
+    def end_training(self):
+        self.tf_sess.run(self.tf_update_parameters, feed_dict={self.tf_update_gradients_input:self.overall_w_change})
+        self.reset_training_vars()
+
+    def reset_training_vars(self):
+        self.overall_w_change = np.zeros((1, self.len_flattened_gradient_vec))
+        self.pred_t, self.pred_t1 = (0., 0.)
+
+        self.grad_sum = np.zeros((1, self.len_flattened_gradient_vec))
+        self.grad_t1 = np.zeros((1, self.len_flattened_gradient_vec))
+
+        self.just_initialized = True
+
+
+    def save_model(self):
+        self.tf_saver.save(sess=self.tf_sess, save_path=self.checkpoint_name)
+
+    def close_model(self):
+        self.tf_saver.save(sess=self.tf_sess, save_path=self.checkpoint_name)
+        print("Checkpoint name:", self.checkpoint_name[5:])
+        self.tf_sess.close()
+
+    def get_best_move(self, board):
+        possible_moves = [move for move in board.legal_moves]
+        possible_feature_vecs = [self.peek_feat_vec(board, move) for move in possible_moves]
+
+        possible_vals = self.tf_sess.run(self.tf_output, feed_dict={self.tf_input_vec:possible_feature_vecs})
+
+        if board.turn: # white is at turn, find move which leads most possibly to white winning
+            max_index = np.argmax(possible_vals, axis=0)
+            return possible_moves[max_index[0]]
+        else: # black is at turn, the lower the better
+            min_index = np.argmin(possible_vals, axis=0)
+            return possible_moves[min_index[0]]
+
+
+
+    def peek_feat_vec(self, board, move):
+        board.push(move)
+        vec = self.get_feature_vector(board)
+        board.pop()
+        return vec
+
+
 
 
 if __name__ == "__main__":
     board = chess.Board()
-    ai = SEOTDNN()
+    ai = NewAI()
 
     # print(ai.tf_sess.run((ai.tf_output, ai.tf_grad_3_b), feed_dict={ai.tf_input_vec:[SEOTDNN.get_feature_vector(board),SEOTDNN.get_feature_vector(board)]}))
     # print(ai.tf_sess.run((ai.tf_output, ai.tf_grad_3_b), feed_dict={
@@ -356,15 +635,43 @@ if __name__ == "__main__":
 
     ai.update_with_current_board(board)
 
+    print("grad_sum", ai.grad_sum)
+    print("pred_t", ai.pred_t)
+    print("pred_t1", ai.pred_t1)
+    print("w_change", ai.overall_w_change.shape)
+
     board.push_san("Na3")
 
     ai.update_with_current_board(board)
 
-    #board.push_san("Na6")
+    print("\ngrad_sum", ai.grad_sum)
+    print("pred_t", ai.pred_t)
+    print("pred_t1", ai.pred_t1)
+    print("w_change", ai.overall_w_change)
 
-    #ai.update_with_current_board(board)
-    #print(board.piece_at(0).symbol())
-    #print(SEOTDNN.get_feature_vector(board))
+    board.push_san("Na6")
+
+    ai.update_with_current_board(board)
+
+    print("\ngrad_sum", ai.grad_sum)
+    print("pred_t", ai.pred_t)
+    print("pred_t1", ai.pred_t1)
+    print("w_change", ai.overall_w_change)
+
+    board.push_san("Nh3")
+
+    ai.update_with_current_board(board, victory_status=1)
+
+    print("\ngrad_sum", ai.grad_sum)
+    print("pred_t", ai.pred_t)
+    print("pred_t1", ai.pred_t1)
+    print("w_change", ai.overall_w_change)
+
+    print("w3", ai.tf_sess.run(ai.tf_w3))
+    ai.end_training()
+    print("w3", ai.tf_sess.run(ai.tf_w3))
+
+    ai.close_model()
 
     """
     print(self.tf_sess.run((self.tf_input_layer_2,
