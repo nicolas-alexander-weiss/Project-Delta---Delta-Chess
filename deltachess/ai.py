@@ -158,8 +158,8 @@ class SEOTDNN(AI):
         self.tf_layer_1_2_b = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64 ,shape=(64,), stddev=0.1))
 
         # get output of first hidden layer, stacking in order to pass them together through last layer
-        self.tf_weighted_sum_layer_1_1 = self.tf_layer_1_1_b + self.tf_global_features_vec @ tf.transpose(self.tf_layer_1_1_w)
-        self.tf_weighted_sum_layer_1_2 = self.tf_layer_1_2_b + self.tf_board_feature_vec @ tf.transpose(self.tf_layer_1_2_w)
+        self.tf_weighted_sum_layer_1_1 = self.tf_layer_1_1_b + tf.matmul(self.tf_global_features_vec, tf.transpose(self.tf_layer_1_1_w))
+        self.tf_weighted_sum_layer_1_2 = self.tf_layer_1_2_b + tf.matmul(self.tf_board_feature_vec, tf.transpose(self.tf_layer_1_2_w))
 
         self.tf_output_layer_1_1 = tf.nn.relu(self.tf_weighted_sum_layer_1_1)
         self.tf_output_layer_1_2 = tf.nn.relu(self.tf_weighted_sum_layer_1_2)
@@ -174,7 +174,7 @@ class SEOTDNN(AI):
         self.tf_layer_2_b = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(83,), stddev=0.1))
 
         # pass through
-        self.tf_weighted_sum_layer_2 = self.tf_layer_2_b + self.tf_input_layer_2 @ tf.transpose(self.tf_layer_2_w)
+        self.tf_weighted_sum_layer_2 = self.tf_layer_2_b + tf.matmul(self.tf_input_layer_2, tf.transpose(self.tf_layer_2_w))
         self.tf_input_layer_3 = tf.nn.relu(self.tf_weighted_sum_layer_2)
 
         # output layer
@@ -182,7 +182,7 @@ class SEOTDNN(AI):
         self.tf_layer_3_b = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(1,), stddev=0.1))
 
         # get output
-        self.tf_weighted_sum_layer_3 = self.tf_layer_3_b + self.tf_input_layer_3 @ tf.transpose(self.tf_layer_3_w)
+        self.tf_weighted_sum_layer_3 = self.tf_layer_3_b + tf.matmul(self.tf_input_layer_3, tf.transpose(self.tf_layer_3_w))
         self.tf_output = tf.nn.tanh(self.tf_weighted_sum_layer_3)
 
         #
@@ -437,8 +437,8 @@ class NewAI(AI):
         self.tf_b1_2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(64,), stddev=0.1))
 
         # get output of first hidden layer, stacking in order to pass them together through last layer
-        self.tf_wsum1_1 = self.tf_b1_1 + self.tf_global_features_vec @ tf.transpose(self.tf_w1_1)
-        self.tf_wsum1_2 = self.tf_b1_2 + self.tf_board_feature_vec @ tf.transpose(self.tf_w1_2)
+        self.tf_wsum1_1 = self.tf_b1_1 + tf.matmul(self.tf_global_features_vec, tf.transpose(self.tf_w1_1))
+        self.tf_wsum1_2 = self.tf_b1_2 + tf.matmul(self.tf_board_feature_vec, tf.transpose(self.tf_w1_2))
 
         # compute activations with RELU
         self.tf_a1_1 = tf.nn.relu(self.tf_wsum1_1)
@@ -454,7 +454,7 @@ class NewAI(AI):
         self.tf_b2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(83,), stddev=0.1))
 
         # pass through
-        self.tf_wsum2 = self.tf_b2 + self.tf_a1 @ tf.transpose(self.tf_w2)
+        self.tf_wsum2 = self.tf_b2 + tf.matmul(self.tf_a1, tf.transpose(self.tf_w2))
         self.tf_a2 = tf.nn.relu(self.tf_wsum2)
 
         # output layer
@@ -462,7 +462,7 @@ class NewAI(AI):
         self.tf_b3 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(1,), stddev=0.1))
 
         # get output
-        self.tf_wsum3 = self.tf_b3 + self.tf_a2 @ tf.transpose(self.tf_w3)
+        self.tf_wsum3 = self.tf_b3 + tf.matmul(self.tf_a2, tf.transpose(self.tf_w3))
         self.tf_output = tf.nn.tanh(self.tf_wsum3)
 
         # gradients on prediction
@@ -723,8 +723,8 @@ class NewAIWITHOUTTANH(AI):
         self.tf_b1_2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(64,), stddev=0.1))
 
         # get output of first hidden layer, stacking in order to pass them together through last layer
-        self.tf_wsum1_1 = self.tf_b1_1 + self.tf_global_features_vec @ tf.transpose(self.tf_w1_1)
-        self.tf_wsum1_2 = self.tf_b1_2 + self.tf_board_feature_vec @ tf.transpose(self.tf_w1_2)
+        self.tf_wsum1_1 = self.tf_b1_1 + tf.matmul(self.tf_global_features_vec, tf.transpose(self.tf_w1_1))
+        self.tf_wsum1_2 = self.tf_b1_2 + tf.matmul(self.tf_board_feature_vec, tf.transpose(self.tf_w1_2))
 
         # compute activations with RELU
         self.tf_a1_1 = tf.nn.relu(self.tf_wsum1_1)
@@ -740,7 +740,7 @@ class NewAIWITHOUTTANH(AI):
         self.tf_b2 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(83,), stddev=0.1))
 
         # pass through
-        self.tf_wsum2 = self.tf_b2 + self.tf_a1 @ tf.transpose(self.tf_w2)
+        self.tf_wsum2 = self.tf_b2 + tf.matmul(self.tf_a1, tf.transpose(self.tf_w2))
         self.tf_a2 = tf.nn.relu(self.tf_wsum2)
 
         # output layer
@@ -748,7 +748,7 @@ class NewAIWITHOUTTANH(AI):
         self.tf_b3 = tf.Variable(initial_value=tf.random_normal(dtype=tf.float64, shape=(1,), stddev=0.1))
 
         # get output
-        self.tf_wsum3 = self.tf_b3 + self.tf_a2 @ tf.transpose(self.tf_w3)
+        self.tf_wsum3 = self.tf_b3 + tf.matmul(self.tf_a2, tf.transpose(self.tf_w3))
         self.tf_output = self.tf_wsum3
 
         # gradients on prediction

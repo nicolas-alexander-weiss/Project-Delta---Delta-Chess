@@ -127,5 +127,5 @@ class AdversialTraining():
 
 if __name__ == "__main__":
     training = AdversialTraining(name1="white4_corrected_assignment", name2="black4_corrected_assignment")
-    training.start_training(5000)
+    training.start_training(1)
 
