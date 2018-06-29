@@ -63,7 +63,7 @@ class SelfPlayTraining:
 
 
 if __name__ == "__main__":
-    spt = SelfPlayTraining(save_name="second_try", num_games=100, verbosity=0)
+    spt = SelfPlayTraining(save_name="second_try", num_games=1, verbosity=0)
     spt.start_training()
 
 
